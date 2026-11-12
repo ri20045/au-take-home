@@ -37,6 +37,7 @@ def normalize_header(header: str) -> str:
     """
     header = header.strip().lower()
     # Collapse runs of '_' or whitespace into a single space.
+    header = re.sub(r"[\s_]+", " ", header).strip()
     return header
 
 
