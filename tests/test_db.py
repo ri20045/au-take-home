@@ -71,3 +71,88 @@ def test_idempotent_insert(tmp_path, motor_schema):
     cur.execute("SELECT COUNT(*) FROM leads")
     count = cur.fetchone()[0]
     assert count == 1
+
+
+def test_multiple_workflow_schemas_share_database(tmp_path, motor_schema):
+    feedback_schema = load_schema("policy_feedback")
+    conn = init_db(str(tmp_path / "multi_workflow.db"), motor_schema)
+    init_db(conn, feedback_schema)
+
+    motor_leads = {
+        ("motor_renewal", "+917932896340"): {
+            "workflow_id": "motor_renewal",
+            "batch_id": "motor_batch",
+            "phone": "+917932896340",
+            "customer_name": "Alice",
+            "policy_number": "MOT/001",
+            "policy_expiry": "2026-12-01",
+            "premium_amount": "100.00",
+            "preferred_language": "en",
+        }
+    }
+    feedback_leads = {
+        ("policy_feedback", "+918196106462"): {
+            "workflow_id": "policy_feedback",
+            "batch_id": "feedback_batch",
+            "phone": "+918196106462",
+            "customer_name": "Bob",
+            "order_id": "ORD/001",
+            "product": "Device cover",
+            "order_date": "2026-11-01",
+            "preferred_language": "hi",
+        }
+    }
+
+    insert_leads(conn, motor_leads, motor_schema)
+    insert_leads(conn, feedback_leads, feedback_schema)
+
+    assert get_lead_by_phone(
+        conn, "motor_renewal", "+917932896340"
+    )["policy_number"] == "MOT/001"
+    assert get_lead_by_phone(
+        conn, "policy_feedback", "+918196106462"
+    )["order_id"] == "ORD/001"
+
+
+def test_insert_leads_rolls_back_all_rows_on_error(tmp_path, motor_schema, monkeypatch):
+    import solution.pipeline.db as db_module
+
+    conn = init_db(str(tmp_path / "transaction.db"), motor_schema)
+    leads = {
+        ("motor_renewal", "+917932896340"): {
+            "workflow_id": "motor_renewal",
+            "batch_id": "batch_001",
+            "phone": "+917932896340",
+            "customer_name": "Alice",
+            "policy_number": "MOT/001",
+            "policy_expiry": None,
+            "premium_amount": None,
+            "preferred_language": "en",
+        },
+        ("motor_renewal", "+918196106462"): {
+            "workflow_id": "motor_renewal",
+            "batch_id": "batch_001",
+            "phone": "+918196106462",
+            "customer_name": "Bob",
+            "policy_number": "MOT/002",
+            "policy_expiry": None,
+            "premium_amount": None,
+            "preferred_language": "en",
+        },
+    }
+    original_hash_pii = db_module.hash_pii
+    hash_calls = 0
+
+    def fail_on_second_hash(value):
+        nonlocal hash_calls
+        hash_calls += 1
+        if hash_calls == 2:
+            raise RuntimeError("simulated insert failure")
+        return original_hash_pii(value)
+
+    monkeypatch.setattr(db_module, "hash_pii", fail_on_second_hash)
+
+    with pytest.raises(RuntimeError, match="simulated insert failure"):
+        insert_leads(conn, leads, motor_schema)
+
+    assert conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0] == 0
