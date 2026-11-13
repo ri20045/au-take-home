@@ -216,7 +216,7 @@ def ingest_events_file(conn: sqlite3.Connection, path: str, schema: WorkflowSche
                 if ev.get("event_type") != "disposition.override" and phone_hash is not None:
                     _store_call(conn, ev["call_id"], ev["workflow_id"], phone_hash)
 
-                if linked and reportable:
+                if linked:
                     counters["linked"] += 1
                     conn.execute(
                         """

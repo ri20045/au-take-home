@@ -193,6 +193,41 @@ def test_unknown_disposition_is_retained_but_not_reportable(tmp_path, motor_sche
     ).fetchone() == (0,)
 
 
+def test_linked_unknown_disposition_is_not_counted_as_an_orphan(
+    tmp_path, motor_schema
+):
+    """Unknown disposition events still retain their valid lead relationship."""
+    csv_path = tmp_path / "known_lead.csv"
+    csv_path.write_text(
+        "customer_name,phone,policy_number\n"
+        "Alice,+91 79328 96340,MOT/001\n",
+        encoding="utf-8",
+    )
+    leads, _, _ = ingest_lead_file(str(csv_path), motor_schema)
+    conn = init_db(str(tmp_path / "linked_unknown.db"), motor_schema)
+    insert_leads(conn, leads, motor_schema)
+
+    event = {
+        "event_id": "linked_unknown",
+        "event_type": "disposition.set",
+        "workflow_id": "motor_renewal",
+        "call_id": "call_linked_unknown",
+        "occurred_at": "2026-10-05T13:20:21Z",
+        "phone": "+91 79328 96340",
+        "payload": {"disposition_code": "not_in_catalogue"},
+    }
+    counters = ingest_events_file(
+        conn, write_events_jsonl(tmp_path, [json.dumps(event)]), motor_schema
+    )
+
+    assert counters["orphan"] == 0
+    assert counters["unknown_disposition"] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM event_links WHERE event_id = ?",
+        ("linked_unknown",),
+    ).fetchone() == (1,)
+
+
 def test_orphan_event_links_when_lead_arrives_later(tmp_path, motor_schema):
     from solution.pipeline.db import insert_leads
 

@@ -248,7 +248,6 @@ def link_pending_events(conn: sqlite3.Connection, workflow_id: str) -> None:
             ON l.workflow_id = e.workflow_id
             AND l.phone_hash = COALESCE(e.phone_hash, c.phone_hash)
         WHERE e.workflow_id = ?
-            AND e.is_reportable = 1
             AND NOT EXISTS (
                 SELECT 1 FROM event_links AS el WHERE el.event_id = e.event_id
             )
