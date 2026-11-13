@@ -36,7 +36,7 @@ def test_db_insert_and_fetch(tmp_path, motor_schema):
             ["Alice", "+91 79328 96340", "MOT/2026/001", ""],
         ],
     )
-    leads, _ = ingest_lead_file(csv_path, motor_schema)
+    leads, _, _ = ingest_lead_file(csv_path, motor_schema)
     db_file = tmp_path / "test.db"
     conn = init_db(str(db_file), motor_schema)
     insert_leads(conn, leads, motor_schema)
@@ -61,7 +61,7 @@ def test_idempotent_insert(tmp_path, motor_schema):
             ["Bob", "+91 66470 90063", "MOT/2026/002", "hi"],
         ],
     )
-    leads, _ = ingest_lead_file(csv_path, motor_schema)
+    leads, _, _ = ingest_lead_file(csv_path, motor_schema)
     db_file = tmp_path / "test2.db"
     conn = init_db(str(db_file), motor_schema)
     insert_leads(conn, leads, motor_schema)
