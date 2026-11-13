@@ -73,6 +73,88 @@ def test_idempotent_insert(tmp_path, motor_schema):
     assert count == 1
 
 
+def test_reingest_preserves_original_batch_and_existing_values(
+    tmp_path, motor_schema
+):
+    conn = init_db(str(tmp_path / "merge_existing.db"), motor_schema)
+    phone = "+917932896340"
+    first_lead = {
+        ("motor_renewal", phone): {
+            "workflow_id": "motor_renewal",
+            "batch_id": "batch_first",
+            "phone": phone,
+            "customer_name": "Alice",
+            "policy_number": "MOT/001",
+            "policy_expiry": "2026-12-01",
+            "premium_amount": "12000.00",
+            "preferred_language": "en",
+        }
+    }
+    later_lead = {
+        ("motor_renewal", phone): {
+            "workflow_id": "motor_renewal",
+            "batch_id": "batch_later",
+            "phone": phone,
+            "customer_name": None,
+            "policy_number": "MOT/002",
+            "policy_expiry": None,
+            "premium_amount": None,
+            "preferred_language": None,
+        }
+    }
+
+    insert_leads(conn, first_lead, motor_schema)
+    insert_leads(conn, later_lead, motor_schema)
+    stored = get_lead_by_phone(conn, "motor_renewal", phone)
+
+    assert stored["batch_id"] == "batch_first"
+    assert stored["customer_name_hash"] == hash_pii("Alice")
+    assert stored["policy_number"] == "MOT/002"
+    assert stored["policy_expiry"] == "2026-12-01"
+    assert stored["premium_amount"] == "12000.00"
+    assert stored["preferred_language"] == "en"
+
+
+def test_stored_lead_pii_is_not_plaintext(tmp_path, motor_schema):
+    conn = init_db(str(tmp_path / "pii.db"), motor_schema)
+    raw_name = "Customer Private Name"
+    raw_phone = "+917932896340"
+    leads = {
+        ("motor_renewal", raw_phone): {
+            "workflow_id": "motor_renewal",
+            "batch_id": "batch_pii",
+            "phone": raw_phone,
+            "customer_name": raw_name,
+            "policy_number": "MOT/PII",
+            "policy_expiry": None,
+            "premium_amount": None,
+            "preferred_language": "en",
+        }
+    }
+
+    insert_leads(conn, leads, motor_schema)
+
+    for table_name, in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND name NOT LIKE 'sqlite_%'"
+    ):
+        columns = [
+            row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')
+        ]
+        for row in conn.execute(f'SELECT * FROM "{table_name}"'):
+            stored_values = " ".join(str(value) for value in row if value is not None)
+            assert raw_name not in stored_values
+            assert raw_phone not in stored_values
+            assert "7932896340" not in stored_values
+
+
+def test_hash_pii_requires_secret(monkeypatch):
+    monkeypatch.delenv("AGY_PII_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="AGY_PII_KEY"):
+        hash_pii("sensitive value")
+
+
 def test_multiple_workflow_schemas_share_database(tmp_path, motor_schema):
     feedback_schema = load_schema("policy_feedback")
     conn = init_db(str(tmp_path / "multi_workflow.db"), motor_schema)

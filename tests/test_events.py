@@ -98,6 +98,56 @@ def test_event_ingestion_edge_cases(tmp_path, motor_schema):
     assert counters["orphan"] == 1
     assert counters["linked"] == 0
 
+
+def test_reingesting_event_file_does_not_duplicate_ledger_rows(
+    tmp_path, motor_schema
+):
+    conn = init_db(str(tmp_path / "event_idempotent.db"), motor_schema)
+    csv_path = tmp_path / "lead.csv"
+    csv_path.write_text(
+        "customer_name,phone,policy_number\n"
+        "Alice,+91 79328 96340,MOT/001\n",
+        encoding="utf-8",
+    )
+    leads, _, _ = ingest_lead_file(str(csv_path), motor_schema)
+    insert_leads(conn, leads, motor_schema)
+    event_path = write_events_jsonl(
+        tmp_path,
+        [
+            json.dumps(
+                {
+                    "event_id": "repeat_1",
+                    "event_type": "call.initiated",
+                    "workflow_id": "motor_renewal",
+                    "call_id": "repeat_call",
+                    "occurred_at": "2026-10-05T13:20:21Z",
+                    "phone": "+91 79328 96340",
+                    "payload": {},
+                }
+            ),
+            json.dumps(
+                {
+                    "event_id": "repeat_2",
+                    "event_type": "disposition.set",
+                    "workflow_id": "motor_renewal",
+                    "call_id": "repeat_call",
+                    "occurred_at": "2026-10-05T13:25:21Z",
+                    "phone": "+91 79328 96340",
+                    "payload": {"disposition_code": "renewed"},
+                }
+            ),
+        ],
+    )
+
+    first = ingest_events_file(conn, event_path, motor_schema)
+    second = ingest_events_file(conn, event_path, motor_schema)
+
+    assert first["linked"] == 2
+    assert second["duplicate"] == 2
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone() == (2,)
+    assert conn.execute("SELECT COUNT(*) FROM event_links").fetchone() == (2,)
+    assert conn.execute("SELECT COUNT(*) FROM calls").fetchone() == (1,)
+
 def test_disposition_override_links_via_call(tmp_path, motor_schema):
     # Insert a lead
     csv_path = tmp_path / "batch.csv"
