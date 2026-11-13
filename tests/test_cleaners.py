@@ -1,5 +1,11 @@
 import pytest
-from solution.pipeline.cleaners import clean_phone
+from solution.pipeline.cleaners import (
+    clean_date,
+    clean_decimal,
+    clean_enum,
+    clean_phone,
+    clean_string,
+)
 
 @pytest.mark.parametrize(
     "raw,expected",
@@ -18,3 +24,65 @@ from solution.pipeline.cleaners import clean_phone
 )
 def test_clean_phone(raw, expected):
     assert clean_phone(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("  Renewal customer  ", "Renewal customer"),
+        ("", None),
+        (" \t ", None),
+    ],
+)
+def test_clean_string(raw, expected):
+    assert clean_string(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2026-12-01", "2026-12-01"),
+        ("01/12/2026", "2026-12-01"),
+        ("01-12-2026", "2026-12-01"),
+        ("01-Dec-2026", "2026-12-01"),
+        ("01-dEC-2026", "2026-12-01"),
+        ("31/02/2026", None),
+        ("2026-13-01", None),
+        ("12/01/2026", "2026-01-12"),
+        ("", None),
+    ],
+)
+def test_clean_date(raw, expected):
+    assert clean_date(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("₹10,000", "10000.00"),
+        ("Rs. 1,234.5", "1234.50"),
+        ("rs100.25", "100.25"),
+        ("INR 0", "0.00"),
+        ("12.345", "12.35"),
+        ("12.344", "12.34"),
+        ("-1", None),
+        ("1,00", None),
+        ("₹", None),
+        ("", None),
+    ],
+)
+def test_clean_decimal(raw, expected):
+    assert clean_decimal(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,allowed,expected",
+    [
+        (" HI ", ["en", "hi", "ta"], "hi"),
+        ("EN", ["en", "hi", "ta"], "en"),
+        ("fr", ["en", "hi", "ta"], None),
+        ("", ["en", "hi", "ta"], None),
+    ],
+)
+def test_clean_enum(raw, allowed, expected):
+    assert clean_enum(raw, allowed) == expected

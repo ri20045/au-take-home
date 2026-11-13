@@ -1,12 +1,9 @@
-"""Utility functions for cleaning and normalising raw input values.
-
-Only the phone‑cleaner is needed for the first task, but the module is
-structured so that future cleaners (date, decimal, enum, …) can be added
-without changing the public API.
-"""
+"""Utility functions for cleaning and normalising raw input values."""
 
 import re
-from typing import Optional
+from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Optional, Sequence
 
 
 def _strip_non_digits(value: str) -> str:
@@ -16,7 +13,7 @@ def _strip_non_digits(value: str) -> str:
     It is deliberately tiny so that the main cleaning logic stays easy to
     read.
     """
-    return re.sub(r"\D", "", value)
+    return re.sub(r"[^0-9]", "", value)
 
 
 def clean_phone(raw_phone: str) -> Optional[str]:
@@ -67,3 +64,95 @@ def clean_phone(raw_phone: str) -> Optional[str]:
 
     # 5. Return the canonical format.
     return f"+91{digits}"
+
+
+def clean_string(raw_value: str) -> Optional[str]:
+    """Trim a string, returning ``None`` when it is empty."""
+    value = raw_value.strip()
+    return value or None
+
+
+def clean_date(raw_value: str) -> Optional[str]:
+    """Normalize a supported date to ``YYYY-MM-DD``.
+
+    Accepted formats are ``YYYY-MM-DD``, ``DD/MM/YYYY``, ``DD-MM-YYYY``,
+    and ``DD-Mon-YYYY``. Invalid or empty values return ``None``.
+    """
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", value)
+    if match:
+        year, month, day = map(int, match.groups())
+    else:
+        match = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", value)
+        if match:
+            day, month, year = map(int, match.groups())
+        else:
+            match = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", value)
+            if match:
+                day, month, year = map(int, match.groups())
+            else:
+                match = re.fullmatch(r"(\d{2})-([A-Za-z]{3})-(\d{4})", value)
+                if not match:
+                    return None
+                day_text, month_text, year_text = match.groups()
+                month_names = {
+                    "jan": 1,
+                    "feb": 2,
+                    "mar": 3,
+                    "apr": 4,
+                    "may": 5,
+                    "jun": 6,
+                    "jul": 7,
+                    "aug": 8,
+                    "sep": 9,
+                    "oct": 10,
+                    "nov": 11,
+                    "dec": 12,
+                }
+                month = month_names.get(month_text.lower(), 0)
+                day, year = int(day_text), int(year_text)
+
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def clean_decimal(raw_value: str) -> Optional[str]:
+    """Normalize a non-negative decimal to two places.
+
+    A supported currency prefix (``₹``, ``Rs``, ``Rs.``, or ``INR``) and
+    conventionally grouped thousands separators are removed before parsing.
+    """
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    value = re.sub(r"^(?:₹|rs\.?|inr)\s*", "", value, count=1, flags=re.IGNORECASE)
+    number_pattern = r"-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?"
+    if not re.fullmatch(number_pattern, value):
+        return None
+
+    try:
+        amount = Decimal(value.replace(",", ""))
+        if amount < 0:
+            return None
+        rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None
+
+    return format(rounded, ".2f")
+
+
+def clean_enum(raw_value: str, allowed_values: Sequence[str]) -> Optional[str]:
+    """Match an enum value case-insensitively and return its lowercase form."""
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    allowed_lowercase = {allowed.lower() for allowed in allowed_values}
+    normalized = value.lower()
+    return normalized if normalized in allowed_lowercase else None
