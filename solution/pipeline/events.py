@@ -16,7 +16,7 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Tuple, List
+from typing import Dict, Mapping, Tuple, List
 from zoneinfo import ZoneInfo
 
 from .cleaners import clean_phone
@@ -130,7 +130,9 @@ def _store_call(conn: sqlite3.Connection, call_id: str, workflow_id: str, phone_
     )
 
 
-def _is_event_linked(conn: sqlite3.Connection, ev: Dict, schema: WorkflowSchema) -> Tuple[bool, str | None]:
+def _is_event_linked(
+    conn: sqlite3.Connection, ev: Dict, schema: WorkflowSchema
+) -> Tuple[bool, str | None]:
     """Determine whether *ev* can be linked to a lead.
 
     Returns ``(linked, phone_hash)`` where ``linked`` is ``True`` when a matching
@@ -170,7 +172,11 @@ def _is_event_linked(conn: sqlite3.Connection, ev: Dict, schema: WorkflowSchema)
 # ---------------------------------------------------------------------------
 
 
-def ingest_events_file(conn: sqlite3.Connection, path: str, schema: WorkflowSchema) -> Dict[str, int]:
+def ingest_events_file(
+    conn: sqlite3.Connection,
+    path: str,
+    schema: WorkflowSchema | Mapping[str, WorkflowSchema],
+) -> Dict[str, int]:
     """Ingest a JSONL file of events.
 
     The function updates the database and returns a dictionary with counters:
@@ -183,6 +189,7 @@ def ingest_events_file(conn: sqlite3.Connection, path: str, schema: WorkflowSche
     """
     ensure_event_schema(conn)
     counters = {
+        "total": 0,
         "malformed": 0,
         "duplicate": 0,
         "orphan": 0,
@@ -197,6 +204,7 @@ def ingest_events_file(conn: sqlite3.Connection, path: str, schema: WorkflowSche
                 line = line.strip()
                 if not line:
                     continue
+                counters["total"] += 1
                 ev, err = _parse_line(line)
                 if err:
                     counters["malformed"] += 1
@@ -205,7 +213,17 @@ def ingest_events_file(conn: sqlite3.Connection, path: str, schema: WorkflowSche
                 if cur.fetchone():
                     counters["duplicate"] += 1
                     continue
-                linked, phone_hash = _is_event_linked(conn, ev, schema)
+                event_schema = (
+                    schema.get(ev.get("workflow_id"))
+                    if isinstance(schema, Mapping)
+                    else schema
+                )
+                if event_schema is None:
+                    raise ValueError(
+                        "No schema found for event workflow "
+                        f"{ev.get('workflow_id')!r}"
+                    )
+                linked, phone_hash = _is_event_linked(conn, ev, event_schema)
                 reportable = _known_disposition(ev, dispositions)
                 if not linked:
                     counters["orphan"] += 1
